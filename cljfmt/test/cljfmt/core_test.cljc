@@ -969,3 +969,20 @@
   (is (= ((wrap-normalize-newlines identity) "foo\nbar\nbaz") "foo\nbar\nbaz"))
   (is (= ((wrap-normalize-newlines identity) "foo\r\nbar\r\nbaz") "foo\r\nbar\r\nbaz"))
   (is (= ((wrap-normalize-newlines identity) "foobarbaz") "foobarbaz")))
+
+(deftest test-ignore-indentation-reformat
+  (is (reformats-to?
+       ["{:a 1"
+        "   :b 2"
+        "     :c 3}"
+        ""
+        "(assoc db :x 1"
+        "          :y 2)"]
+        ["{:a 1"
+         " :b 2"
+         " :c 3}"
+         ""
+         "(assoc db :x 1"
+         "          :y 2)"]
+       {:skip-indentation ['assoc]})
+      "can target specif symbols to ignore indentation while still reformatting others"))

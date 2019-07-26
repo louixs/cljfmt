@@ -19,7 +19,8 @@
                  [rewrite-clj.zip.base :as zb :refer [edn child-sexprs]]
                  [rewrite-clj.zip.whitespace :as zw
                   :refer [append-space skip whitespace-or-comment?]])
-       (:require-macros [cljfmt.core :refer [read-resource]])]))
+       (:require-macros [cljfmt.core :refer [read-resource]])])
+  (gen-class))
 
 #?(:clj (def read-resource* (comp read-string slurp io/resource)))
 #?(:clj (defmacro read-resource [path] `'~(read-resource* path)))
@@ -133,14 +134,28 @@
 (defn- comment-next? [zloc]
   (-> zloc zip/next skip-whitespace comment?))
 
-(defn- should-indent? [zloc]
-  (and (line-break? zloc) (not (comment-next? zloc))))
+(defn- ignore? [form symbols-to-ignore]
+  (let [ignore-set (set symbols-to-ignore)
+        form-symbol (form-symbol form)]
+    (ignore-set form-symbol)))
 
-(defn- should-unindent? [zloc]
-  (and (indentation? zloc) (not (comment-next? zloc))))
+(defn- should-indent?
+  ([zloc]
+   (and (line-break? zloc) (not (comment-next? zloc))))
+  ([zloc symbols-to-ignore]
+   (and (line-break? zloc) (not (comment-next? zloc)) (not (ignore? zloc symbols-to-ignore)))))
 
-(defn unindent [form]
-  (transform form edit-all should-unindent? zip/remove))
+(defn- should-unindent?
+  ([zloc]
+   (and (indentation? zloc) (not (comment-next? zloc))))
+  ([zloc symbols-to-ignore]
+   (and (indentation? zloc) (not (comment-next? zloc)) (not (ignore? zloc symbols-to-ignore)))))
+
+(defn unindent
+  ([form]
+   (transform form edit-all should-unindent? zip/remove))
+  ([form symbols-to-ignore]
+   (transform form edit-all #(should-unindent? % symbols-to-ignore) zip/remove)))
 
 (def ^:private start-element
   {:meta "^", :meta* "#^", :vector "[",       :map "{"
@@ -268,13 +283,18 @@
          true)))
 
 (defn- block-indent [zloc key idx alias-map]
-  (if (or (indent-matches? key (fully-qualified-symbol zloc alias-map))
-          (indent-matches? key (remove-namespace (form-symbol zloc))))
+  (when (or (indent-matches? key (fully-qualified-symbol zloc alias-map))
+            (indent-matches? key (remove-namespace (form-symbol zloc))))
     (let [zloc-after-idx (some-> zloc (nth-form (inc idx)))]
       (if (and (or (nil? zloc-after-idx) (first-form-in-line? zloc-after-idx))
                (> (index-of zloc) idx))
         (inner-indent zloc key 0 nil alias-map)
         (list-indent zloc)))))
+
+;; can use something like this to do assoc block indent
+;; (-> parsed edn z/down z/right z/right margin)
+;; (assoc {} :x "x"
+;;           :a "z"))
 
 (def default-indents
   (merge (read-resource "cljfmt/indents/clojure.clj")
@@ -329,7 +349,9 @@
   ([form indents]
    (transform form edit-all should-indent? #(indent-line % indents {})))
   ([form indents alias-map]
-   (transform form edit-all should-indent? #(indent-line % indents alias-map))))
+   (transform form edit-all should-indent? #(indent-line % indents alias-map)))
+  ([form indents alias-map symbols-to-ignore]
+   (transform form edit-all #(should-indent? % symbols-to-ignore) #(indent-line % indents alias-map))))
 
 (defn reindent
   ([form]
@@ -337,7 +359,9 @@
   ([form indents]
    (indent (unindent form) indents))
   ([form indents alias-map]
-   (indent (unindent form) indents alias-map)))
+   (indent (unindent form) indents alias-map))
+  ([form indents alias-map symbols-to-ignore]
+   (indent (unindent form symbols-to-ignore) indents alias-map symbols-to-ignore)))
 
 (defn final? [zloc]
   (and (nil? (zip/right zloc)) (root? (zip/up zloc))))
@@ -362,7 +386,8 @@
          insert-missing-whitespace)
        (cond-> (:indentation? opts true)
          (reindent (:indents opts default-indents)
-                   (:alias-map opts {})))
+                   (:alias-map opts {})
+                   (:skip-indentation opts [])))
        (cond-> (:remove-trailing-whitespace? opts true)
          remove-trailing-whitespace))))
 
